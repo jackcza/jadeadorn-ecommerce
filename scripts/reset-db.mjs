@@ -2,7 +2,7 @@
 // Refuses anything that is not a local file: URL inside prisma/.
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 
 function databaseUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -20,7 +20,7 @@ if (!url.startsWith("file:")) {
 }
 const prismaDir = resolve("prisma");
 const file = resolve(prismaDir, url.slice("file:".length));
-if (!file.startsWith(prismaDir + "/") || !file.endsWith(".db")) {
+if (!file.startsWith(prismaDir + sep) || !file.endsWith(".db")) {
   console.error(`Refusing to delete ${file}: only *.db files inside prisma/ are reset`);
   process.exit(1);
 }

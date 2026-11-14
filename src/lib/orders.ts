@@ -96,6 +96,8 @@ function normalizeItems(items: CheckoutRequest["items"]) {
 
 export interface PlaceOrderResult {
   order: PublicOrder;
+  /** Internal order id, for server-side use such as logs; never sent to the client. */
+  orderId: string;
   /** true when the idempotency key was already used and the existing order is returned. */
   replayed: boolean;
 }
@@ -112,7 +114,7 @@ export async function placeOrder(
     where: { idempotencyKey: input.idempotencyKey },
     include: orderInclude,
   });
-  if (existing) return { order: toPublicOrder(existing), replayed: true };
+  if (existing) return { order: toPublicOrder(existing), orderId: existing.id, replayed: true };
 
   const items = normalizeItems(input.items);
   const products = await prisma.product.findMany({
@@ -180,7 +182,7 @@ export async function placeOrder(
         await tx.orderItem.createMany({ data: lines.map((l) => ({ ...l, orderId: created.id })) });
         return tx.order.findUniqueOrThrow({ where: { id: created.id }, include: orderInclude });
       });
-      return { order: toPublicOrder(order), replayed: false };
+      return { order: toPublicOrder(order), orderId: order.id, replayed: false };
     } catch (err) {
       if (isUniqueViolation(err, "idempotencyKey")) {
         // A concurrent duplicate submit won the race; return its order instead of a second one.
@@ -188,7 +190,7 @@ export async function placeOrder(
           where: { idempotencyKey: input.idempotencyKey },
           include: orderInclude,
         });
-        return { order: toPublicOrder(winner), replayed: true };
+        return { order: toPublicOrder(winner), orderId: winner.id, replayed: true };
       }
       if (isUniqueViolation(err)) continue;
       throw err;

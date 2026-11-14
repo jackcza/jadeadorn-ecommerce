@@ -49,11 +49,12 @@ a shopper has already looked at, without the cost of building and reviewing nati
 
 ## Environment variables
 
-Only one, and it is not a secret (`.env.example`):
+Neither is a secret (`.env.example`):
 
 | Name | Default | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | `file:./dev.db` | SQLite file, relative to `prisma/schema.prisma` |
+| `LOG_LEVEL` | `debug` in `npm run dev`, `info` in production | Log verbosity, see [Logging](#logging) |
 
 There are no payment keys: the mock provider needs none.
 
@@ -92,17 +93,81 @@ All errors use one shape: `{ "error": { "code": "VALIDATION_ERROR", "message": "
 | `GET /api/products` | All active products |
 | `GET /api/products?category=<slug>` | Products in one category (`404` for an unknown slug) |
 | `GET /api/products/<slug>` | One product (`404` if missing or inactive) |
-| `POST /api/checkout` | Validate (Zod) → reprice from DB → mock charge → create `Order` + `OrderItem`s in one transaction. `201` new, `200` idempotent replay, `400` validation, `402` declined, `409` product unavailable, `403` cross-origin, `413` too large |
+| `POST /api/checkout` | Validate (Zod) → reprice from DB → mock charge → create `Order` + `OrderItem`s in one transaction. `201` new, `200` idempotent replay, `400` validation, `402` declined, `409` product unavailable, `403` cross-origin, `413` too large. Every response carries an `X-Request-Id` header |
 | `GET /api/orders/<publicId>` | Order for the confirmation page (`no-store`; no internal ids) |
 
 Pages: `/`, `/products`, `/category/<slug>`, `/products/<slug>`, `/cart`, `/checkout`,
 `/orders/<publicId>` (confirmation), `/offline`.
 
+## Logging
+
+The API logs structured JSON with [Pino](https://getpino.io), through one module: `src/lib/logger.ts`.
+Logs go to stdout only. Nothing is written to SQLite or to log files.
+
+**Configuration.** `LOG_LEVEL` accepts `debug`, `info`, `warn`, `error` (case-insensitive) or `silent`. Set it
+in the shell or in `.env`. Unknown values fall back to the default: `debug` under `npm run dev`, `info` in
+production. In development the lines are pretty-printed by `pino-pretty`, a dev dependency that is only
+loaded when `NODE_ENV=development`. In production (`npm start`) every line is one JSON object. `npm test`
+runs with `LOG_LEVEL=silent`, and the logging tests capture lines in memory instead.
+
+| Level | Used for |
+| --- | --- |
+| `debug` | Diagnostic detail: a checkout body passed validation (line and item counts) |
+| `info` | Normal business events: checkout started, payment succeeded, order created or replayed |
+| `warn` | Expected failures: payment declined, or checkout rejected (invalid input, unavailable product, cross-origin, too large) |
+| `error` | Server failures: unexpected API errors (with stack), database errors, a checkout that failed after payment |
+
+Every line has `level`, `timestamp` (ISO 8601, UTC), `service`, `event` and `msg`. API lines add
+`requestId` and `route`.
+
+| `event` | Level | Logged when | Extra fields |
+| --- | --- | --- | --- |
+| `checkout_started` | info | `POST /api/checkout` arrives | |
+| `checkout_validated` | debug | the body passed Zod validation | `lineCount`, `itemCount` |
+| `payment_succeeded` | info | the mock provider approved the charge | `provider`, `amountCents`, `currency`, `durationMs` |
+| `payment_failed` | warn | the mock provider declined the charge | the same, plus `reason` |
+| `order_created` | info | `Order` + `OrderItem`s were committed | `orderId`, `orderNumber`, `totalCents`, `currency`, `durationMs` |
+| `order_replayed` | info | a known idempotency key returned the existing order | the same as `order_created` |
+| `order_creation_failed` | warn (4xx), error (5xx) | a checkout ended without an order | `status`, `errorCode`, `durationMs` |
+| `api_error` | error | an API route hit an unexpected error and answered `500` | `status`, `errorCode`, `err` (type, message, stack) |
+| `database_error` | error | a Prisma / SQLite call failed | `status`, `errorName`, `prismaCode`, `model` |
+
+Each checkout request gets a new UUID `requestId`, which is also returned in the `X-Request-Id` response
+header. `durationMs` measures the provider call on payment events and the whole request on `order_*`
+events. Expected 4xx answers from the catalog and order routes (such as an unknown product) are normal
+responses and are not logged. A successful checkout in production looks like this:
+
+```json
+{"level":"info","timestamp":"2026-11-14T07:12:24.668Z","service":"jadeadorn","requestId":"2d0a9787-63d5-4f29-9993-929573a33aad","route":"POST /api/checkout","event":"checkout_started","msg":"Checkout started"}
+{"level":"info","timestamp":"2026-11-14T07:12:24.676Z","service":"jadeadorn","requestId":"2d0a9787-63d5-4f29-9993-929573a33aad","route":"POST /api/checkout","event":"payment_succeeded","provider":"mock","amountCents":9600,"currency":"USD","durationMs":0,"msg":"Payment succeeded"}
+{"level":"info","timestamp":"2026-11-14T07:12:24.689Z","service":"jadeadorn","requestId":"2d0a9787-63d5-4f29-9993-929573a33aad","route":"POST /api/checkout","event":"order_created","orderId":"cmwg2iwdi0000aickyz7fpj3w","orderNumber":"JA-261114-7QH3SH","totalCents":9600,"currency":"USD","durationMs":21,"msg":"Order created"}
+```
+
+**Never logged:** the shipping address, customer name and email, payment tokens or card data,
+`Authorization` headers, cookies, passwords, and the idempotency key or order `publicId`. Either of the
+last two is enough to read an order and the customer's details. Log calls pass only the fields listed
+above. As a safety net, Pino `redact` replaces those keys with `"[REDACTED]"` at the top level and two
+levels down (for example `customer`, `payment.token`, `req.headers.cookie`). Database errors log the
+Prisma error code and model but not the message, because Prisma messages can echo query values.
+
+**Viewing logs:**
+
+```bash
+npm run dev                          # pretty and colorized, debug lines included
+LOG_LEVEL=warn npm run dev           # warnings and errors only (PowerShell: $env:LOG_LEVEL="warn"; npm run dev)
+npm run build && npm start           # JSON lines on stdout
+npm start | npx pino-pretty          # read production output in the pretty format
+npm start | grep '"event":"order_'   # filter by event (PowerShell: npm start | Select-String '"event":"order_')
+```
+
+To follow one checkout, copy `X-Request-Id` from the response (browser dev tools → Network) and search
+the logs for it.
+
 ## Tests
 
 ```bash
 npm run lint       # eslint + typecheck
-npm test           # 39 Vitest tests (7 files)
+npm test           # 53 Vitest tests (9 files)
 npm run test:e2e   # 10 Playwright tests (5 specs × mobile-375 and desktop-1440)
 ```
 
@@ -110,7 +175,11 @@ Vitest covers: DB init + idempotent seed, category queries, product detail, cart
 (localStorage + provider remount), checkout success, mock payment failure (nothing persisted),
 order persistence + name/price snapshots, duplicate submit (sequential and concurrent) creates one
 order, server-side repricing (client prices ignored), inactive products, validation errors, the PWA
-manifest/icons and service-worker caching rules, and the offline-blocked checkout UI.
+manifest/icons and service-worker caching rules, and the offline-blocked checkout UI. The logging tests
+cover `LOG_LEVEL` parsing and filtering, the JSON fields, redaction, the event sequence for success,
+decline, replay and rejected checkouts, a real database failure after payment (the `OrderItem` table is
+renamed for one request), and that no customer details, payment token, idempotency key or `publicId`
+reach the output.
 
 Playwright covers the full mobile and desktop purchase (category → detail → bag → checkout → pay →
 confirmation → refresh), decline then retry, empty bag / 404, service-worker registration, and
@@ -169,7 +238,8 @@ jadeadorn/
 ├── src/app/           pages + api/ route handlers + manifest.ts
 ├── src/components/    cart/, catalog/, checkout/, layout/, pwa/
 ├── src/data/          catalog seed data + SVG art
-├── src/lib/           db, catalog, orders (checkout service), mock-payment, validation, money, cart
+├── src/lib/           db, catalog, orders (checkout service), mock-payment, validation, money, cart,
+│                      logger, payment-logging, errors
 ├── tests/             Vitest unit + integration
 └── e2e/               Playwright specs
 ```

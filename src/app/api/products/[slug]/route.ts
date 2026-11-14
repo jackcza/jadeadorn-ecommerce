@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getProductBySlug } from "@/lib/catalog";
 import { AppError, handleRouteError } from "@/lib/errors";
+import { requestLogger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,6 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
     if (!product) throw new AppError(404, "NOT_FOUND", "Product not found");
     return NextResponse.json({ product });
   } catch (err) {
-    return handleRouteError(err);
+    return handleRouteError(err, requestLogger("GET /api/products/[slug]"));
   }
 }

@@ -52,6 +52,42 @@ case.
 cache fallback. Checkout, order APIs and confirmation pages are never cached (they also send
 `no-store` plus a sensitivity header). Offline, the pay button is disabled.
 
+## Logging
+
+One Pino logger (`src/lib/logger.ts`) writes JSON lines to stdout. That is the default every hosting
+platform collects, and it keeps the app free of log files and log tables. SQLite stores business
+records only; putting logs there would add writes to the checkout path and tie log retention to
+database backups.
+
+- **Correlation.** Each checkout gets a `requestId` (also sent back as `X-Request-Id`) bound to a child
+  logger, so its `checkout_started → payment_* → order_*` lines can be joined.
+- **Separation from business logic.** Logging happens at the edges. The checkout route logs request
+  outcomes, a `withPaymentLogging` wrapper around the `PaymentProvider` logs each charge, and the shared
+  `handleRouteError` logs `api_error` / `database_error`. `orders.ts` and `mock-payment.ts` do not import
+  the logger. The app-facing `Logger` type allows only debug/info/warn/error and requires an `event`
+  name, so every line stays queryable.
+- **Privacy.** Lines carry ids, amounts, error codes and durations. Pino `redact` is a backstop for
+  customer details, payment data, auth headers, cookies, passwords, and the idempotency key and
+  `publicId` (each one unlocks an order). Prisma error messages are never logged because they can echo
+  query values.
+
+**Going live with log monitoring:**
+
+1. Keep `LOG_LEVEL=info` and ship stdout. On Vercel, add a Log Drain (Datadog, Better Stack or Axiom).
+   On ECS, use the `awslogs` driver to CloudWatch Logs (Logs Insights queries JSON fields directly) or
+   FireLens to Datadog. The lines are already JSON, so no parsing rules are needed; `level`,
+   `timestamp`, `service` and `event` map onto standard attributes.
+2. Build a checkout dashboard: `checkout_started` vs `order_created`, `order_creation_failed` by
+   `errorCode`, the payment decline rate, and p95 `durationMs`.
+3. Alert on any `order_creation_failed` at `error` level (with real payments that can mean "charged but
+   no order"), on spikes of `database_error` or `api_error`, and on a decline rate above baseline.
+4. Reuse the platform's request id (`x-vercel-id`, the ALB's `X-Amzn-Trace-Id`) as `requestId` when
+   present, and attach it to Sentry events so errors and logs link up.
+5. Restrict who can read logs and set a retention period (for example 30 days), even though lines
+   contain no customer data by design.
+6. Page render errors are still printed by Next.js itself. An `instrumentation.ts` `onRequestError`
+   hook (or Sentry) would bring them into the same format.
+
 ## Production Hosting
 
 Either option works without changing the app's architecture:
@@ -63,7 +99,8 @@ Either option works without changing the app's architecture:
 
 For both: **move SQLite to PostgreSQL** by changing the Prisma `provider`, then switch to
 `prisma migrate` with checked-in migrations run in CI/CD. Add connection pooling (PgBouncer or
-Prisma Accelerate), structured logs, error tracking (Sentry), uptime checks and alerting.
+Prisma Accelerate), ship the structured logs to a log platform (see Logging), error tracking (Sentry),
+uptime checks and alerting.
 
 ## HTTPS
 

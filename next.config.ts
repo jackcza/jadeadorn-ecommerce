@@ -7,6 +7,8 @@ const noStore = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Loaded from node_modules rather than bundled, so pino can start its pino-pretty worker in dev.
+  serverExternalPackages: ["pino"],
   async headers() {
     return [
       {

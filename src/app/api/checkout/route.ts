@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
-import { AppError, errorResponse, handleRouteError } from "@/lib/errors";
-import { placeOrder } from "@/lib/orders";
-import { checkoutRequestSchema, fieldErrors } from "@/lib/validation";
+import { AppError, handleRouteError } from "@/lib/errors";
+import { elapsedMs, newRequestId, requestLogger } from "@/lib/logger";
+import { mockPaymentProvider } from "@/lib/mock-payment";
+import { placeOrder, type PlaceOrderResult } from "@/lib/orders";
+import { withPaymentLogging } from "@/lib/payment-logging";
+import { checkoutRequestSchema, fieldErrors, type CheckoutRequest } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
 
@@ -22,34 +25,76 @@ function assertSameOrigin(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
-  try {
-    assertSameOrigin(request);
+async function readCheckoutRequest(request: Request): Promise<CheckoutRequest> {
+  assertSameOrigin(request);
 
-    const raw = await request.text();
-    if (raw.length > MAX_BODY_BYTES) {
-      return errorResponse(413, "PAYLOAD_TOO_LARGE", "Request body is too large");
-    }
-    let json: unknown;
-    try {
-      json = JSON.parse(raw);
-    } catch {
-      return errorResponse(400, "INVALID_JSON", "Request body must be valid JSON");
-    }
-
-    const parsed = checkoutRequestSchema.safeParse(json);
-    if (!parsed.success) {
-      return errorResponse(400, "VALIDATION_ERROR", "Please correct the highlighted fields", {
-        fields: fieldErrors(parsed.error),
-      });
-    }
-
-    const { order, replayed } = await placeOrder(parsed.data);
-    return NextResponse.json(
-      { order, replayed, confirmationUrl: `/orders/${order.publicId}` },
-      { status: replayed ? 200 : 201, headers: { "Cache-Control": "no-store" } },
-    );
-  } catch (err) {
-    return handleRouteError(err);
+  const raw = await request.text();
+  if (raw.length > MAX_BODY_BYTES) {
+    throw new AppError(413, "PAYLOAD_TOO_LARGE", "Request body is too large");
   }
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw new AppError(400, "INVALID_JSON", "Request body must be valid JSON");
+  }
+
+  const parsed = checkoutRequestSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new AppError(400, "VALIDATION_ERROR", "Please correct the highlighted fields", {
+      fields: fieldErrors(parsed.error),
+    });
+  }
+  return parsed.data;
+}
+
+export async function POST(request: Request) {
+  const startedAt = performance.now();
+  const requestId = newRequestId();
+  const log = requestLogger("POST /api/checkout", requestId);
+  log.info({ event: "checkout_started" }, "Checkout started");
+
+  let result: PlaceOrderResult;
+  try {
+    const input = await readCheckoutRequest(request);
+    log.debug(
+      {
+        event: "checkout_validated",
+        lineCount: input.items.length,
+        itemCount: input.items.reduce((n, i) => n + i.quantity, 0),
+      },
+      "Checkout request validated",
+    );
+    result = await placeOrder(input, withPaymentLogging(mockPaymentProvider, log));
+  } catch (err) {
+    const response = handleRouteError(err, log);
+    log[response.status >= 500 ? "error" : "warn"](
+      {
+        event: "order_creation_failed",
+        status: response.status,
+        errorCode: err instanceof AppError ? err.code : "INTERNAL_ERROR",
+        durationMs: elapsedMs(startedAt),
+      },
+      "Order creation failed",
+    );
+    response.headers.set("X-Request-Id", requestId);
+    return response;
+  }
+
+  const { order, orderId, replayed } = result;
+  log.info(
+    {
+      event: replayed ? "order_replayed" : "order_created",
+      orderId,
+      orderNumber: order.orderNumber,
+      totalCents: order.totalCents,
+      currency: order.currency,
+      durationMs: elapsedMs(startedAt),
+    },
+    replayed ? "Existing order returned for a repeated idempotency key" : "Order created",
+  );
+  return NextResponse.json(
+    { order, replayed, confirmationUrl: `/orders/${order.publicId}` },
+    { status: replayed ? 200 : 201, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } },
+  );
 }

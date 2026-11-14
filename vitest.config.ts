@@ -12,7 +12,7 @@ export default defineConfig({
     globalSetup: ["tests/global-setup.ts"],
     // Integration tests share one SQLite file, so run files sequentially.
     fileParallelism: false,
-    env: { DATABASE_URL: "file:./test.db", NODE_ENV: "test" },
+    env: { DATABASE_URL: "file:./test.db", NODE_ENV: "test", LOG_LEVEL: "silent" },
     testTimeout: 20_000,
   },
 });

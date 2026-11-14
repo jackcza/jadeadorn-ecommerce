@@ -1,4 +1,6 @@
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
+import type { Logger } from "./logger";
 
 export type ErrorCode =
   | "VALIDATION_ERROR"
@@ -31,8 +33,39 @@ export function errorResponse(status: number, code: ErrorCode, message: string, 
   return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export function handleRouteError(err: unknown) {
-  if (err instanceof AppError) return errorResponse(err.status, err.code, err.message, err.details);
-  console.error("[api] unexpected error", err);
+const DATABASE_ERRORS = [
+  Prisma.PrismaClientKnownRequestError,
+  Prisma.PrismaClientUnknownRequestError,
+  Prisma.PrismaClientRustPanicError,
+  Prisma.PrismaClientInitializationError,
+  Prisma.PrismaClientValidationError,
+];
+
+const isDatabaseError = (err: unknown): err is Error => DATABASE_ERRORS.some((DbError) => err instanceof DbError);
+
+/** Prisma messages can echo query values such as customer details, so only the class, code and model are kept. */
+function databaseErrorFields(err: Error) {
+  const known = err instanceof Prisma.PrismaClientKnownRequestError ? err : undefined;
+  return {
+    errorName: err.name,
+    prismaCode: known?.code ?? (err instanceof Prisma.PrismaClientInitializationError ? err.errorCode : undefined),
+    model: known?.meta?.modelName,
+  };
+}
+
+/**
+ * Maps a thrown value to the API error response. Expected 4xx AppErrors are not logged here;
+ * server errors are logged as `api_error`, or as `database_error` when Prisma threw.
+ */
+export function handleRouteError(err: unknown, log: Logger) {
+  if (err instanceof AppError) {
+    if (err.status >= 500) log.error({ event: "api_error", status: err.status, errorCode: err.code }, err.message);
+    return errorResponse(err.status, err.code, err.message, err.details);
+  }
+  if (isDatabaseError(err)) {
+    log.error({ event: "database_error", status: 500, ...databaseErrorFields(err) }, "Database error");
+  } else {
+    log.error({ event: "api_error", status: 500, errorCode: "INTERNAL_ERROR", err }, "Unexpected API error");
+  }
   return errorResponse(500, "INTERNAL_ERROR", "Something went wrong. Please try again.");
 }

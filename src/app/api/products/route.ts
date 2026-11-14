@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getCategory, listProducts } from "@/lib/catalog";
 import { AppError, handleRouteError } from "@/lib/errors";
+import { requestLogger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,6 @@ export async function GET(request: NextRequest) {
     }
     return NextResponse.json({ products: await listProducts({ categorySlug: category }) });
   } catch (err) {
-    return handleRouteError(err);
+    return handleRouteError(err, requestLogger("GET /api/products"));
   }
 }
