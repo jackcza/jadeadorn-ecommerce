@@ -1,0 +1,51 @@
+{
+  "name": "jadeadorn",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JadeAdorn – full-stack e-commerce PWA (Yabei SDE case study)",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint . --max-warnings=0 && tsc --noEmit",
+    "setup": "node scripts/ensure-env.mjs && prisma generate && prisma db push --skip-generate && npm run db:seed",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "node scripts/ensure-env.mjs && node scripts/reset-db.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "icons": "node scripts/generate-icons.mjs",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "next": "15.5.29",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@playwright/test": "1.65.1",
+    "@tailwindcss/postcss": "4.1.18",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "eslint": "9.39.5",
+    "eslint-config-next": "15.5.29",
+    "prisma": "6.19.3",
+    "tailwindcss": "4.1.18",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7",
+    "jsdom": "26.1.0"
+  },
+  "overrides": {
+    "postcss": "8.5.33",
+    "deepmerge-ts": "8.0.2"
+  }
+}
