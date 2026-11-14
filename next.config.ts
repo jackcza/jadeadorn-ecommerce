@@ -7,6 +7,8 @@ const noStore = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Pin the workspace root to this project; otherwise a stray lockfile in a parent folder is picked instead.
+  outputFileTracingRoot: __dirname,
   // Loaded from node_modules rather than bundled, so pino can start its pino-pretty worker in dev.
   serverExternalPackages: ["pino"],
   async headers() {
