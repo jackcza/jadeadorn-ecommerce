@@ -16,7 +16,8 @@ interface StoredCart {
   lines: CartLine[];
 }
 
-const clampQty = (q: number) => Math.min(MAX_QTY, Math.max(1, Math.floor(q)));
+/** Rounds down and keeps the quantity between 1 and MAX_QTY. */
+export const clampQuantity = (q: number) => Math.min(MAX_QTY, Math.max(1, Math.floor(q)));
 
 function isLine(v: unknown): v is CartLine {
   if (!v || typeof v !== "object") return false;
@@ -44,7 +45,7 @@ export function parseCart(raw: string | null): CartLine[] {
     return data.lines.filter(isLine).flatMap((l) => {
       if (seen.has(l.productId)) return [];
       seen.add(l.productId);
-      return [{ ...l, quantity: clampQty(l.quantity) }];
+      return [{ ...l, quantity: clampQuantity(l.quantity) }];
     });
   } catch {
     return [];
@@ -70,26 +71,3 @@ export function saveCart(storage: Pick<Storage, "setItem"> | undefined, lines: C
     // Storage full or disabled (e.g. private mode): the cart still works for this session.
   }
 }
-
-export function addLine(lines: CartLine[], item: Omit<CartLine, "quantity">, qty = 1): CartLine[] {
-  const found = lines.find((l) => l.productId === item.productId);
-  if (found) {
-    return lines.map((l) =>
-      l.productId === item.productId ? { ...l, ...item, quantity: clampQty(l.quantity + qty) } : l,
-    );
-  }
-  return [...lines, { ...item, quantity: clampQty(qty) }];
-}
-
-export function setLineQuantity(lines: CartLine[], productId: string, qty: number): CartLine[] {
-  if (qty < 1) return removeLine(lines, productId);
-  return lines.map((l) => (l.productId === productId ? { ...l, quantity: clampQty(qty) } : l));
-}
-
-export function removeLine(lines: CartLine[], productId: string): CartLine[] {
-  return lines.filter((l) => l.productId !== productId);
-}
-
-export const cartCount = (lines: CartLine[]) => lines.reduce((n, l) => n + l.quantity, 0);
-export const cartSubtotalCents = (lines: CartLine[]) =>
-  lines.reduce((n, l) => n + l.priceCents * l.quantity, 0);
