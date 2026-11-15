@@ -87,16 +87,17 @@ export function CheckoutForm() {
     );
   }
 
-  const set = (field: Field) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setValues((v) => ({ ...v, [field]: e.target.value }));
+  function updateField(field: Field, value: string) {
+    setValues((current) => ({ ...current, [field]: value }));
+
     if (errors[field]) {
-      setErrors((prev) => {
-        const next = { ...prev };
+      setErrors((current) => {
+        const next = { ...current };
         delete next[field];
         return next;
       });
     }
-  };
+  }
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -174,7 +175,7 @@ export function CheckoutForm() {
         id={field}
         name={field}
         value={(values[field] as string) ?? ""}
-        onChange={set(field)}
+        onChange={(e) => updateField(field, e.target.value)}
         aria-invalid={errors[field] ? true : undefined}
         aria-describedby={errors[field] ? `${field}-error` : undefined}
         className="field-input"
@@ -212,7 +213,7 @@ export function CheckoutForm() {
               <label htmlFor="country" className="mb-1.5 block text-xs font-semibold tracking-wide">
                 Country
               </label>
-              <select id="country" name="country" value={values.country} onChange={set("country")} className="field-input" autoComplete="country">
+              <select id="country" name="country" value={values.country} onChange={(e) => updateField("country", e.target.value)} className="field-input" autoComplete="country">
                 {COUNTRIES.map((c) => (
                   <option key={c.code} value={c.code}>
                     {c.name}
